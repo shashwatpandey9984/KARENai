@@ -1,6 +1,6 @@
 Flask
 flask-cors
-opencv-python-headless
+opencv-python-headless>=4.8,<5
 numpy
 requests
 gunicorn

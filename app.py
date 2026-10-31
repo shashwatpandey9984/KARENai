@@ -142,6 +142,12 @@ def frontend_config():
     )
     return Response(config, mimetype="application/javascript")
 
+@app.route("/health")
+def health():
+    if face_cascade is None:
+        return jsonify({"status": "unavailable", "face_detection": False}), 503
+    return jsonify({"status": "ok", "face_detection": True})
+
 @app.route("/alarm.mp3")
 def alarm_audio():
     return send_from_directory(PROJECT_DIR, "alarm.mp3")

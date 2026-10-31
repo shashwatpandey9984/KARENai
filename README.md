@@ -8,7 +8,7 @@ KAREN is a small Flask application with a plain JavaScript chat interface. Its e
 - `news_service.py` fetches public RSS feeds and filters dated International and National · India headlines.
 - `index.html`, `style.css`, `index.js`, and `config.js` implement the browser interface and assistant behavior.
 - `code_debugger/` provides source-language detection, Python static analysis, analyzer adapters, security reporting, AI-provider status, correction proposals, diffs, and the safe test-execution gate.
-- `models` is an unused face-detector weights manifest; the active face detector is OpenCV's bundled Haar cascade.
+- `models` is an unused face-detector weights manifest; the active face detector uses the bundled `haarcascade_frontalface_default.xml` OpenCV model, with the original license notice retained in the file.
 - No coding LLM, AI API client, model configuration, or AI API key exists in this project. The debugger does not transmit submitted code to a third party and does not invent provider credentials.
 
 ## File inventory
@@ -17,6 +17,7 @@ Added:
 
 - `config.js`: default static-host API configuration.
 - `render.yaml`: Render blueprint for running the Flask app and serving its frontend.
+- `haarcascade_frontalface_default.xml`: bundled face-detection model so deployments do not depend on OpenCV wheel data files.
 - `.gitignore`: excludes Python caches, local environments, and local configuration files.
 - `.python-version`: selects Python 3.12 on hosts that support this version file.
 - `code_debugger/__init__.py`: shared analysis input limit.
@@ -36,7 +37,7 @@ Added:
 Modified:
 
 - `app.py`: registers debugger and news routes and caps HTTP request bodies.
-- `requirements.txt`: includes the RSS HTTP client and production WSGI server.
+- `requirements.txt`: includes the RSS HTTP client and production WSGI server, and keeps OpenCV on the 4.x API used by the face detector.
 - `index.html`, `style.css`, and `index.js`: add the code workbench, approval-gated fixes, and highlighted current-affairs cards.
 - `README.md`: installation, architecture, safety limits, usage, test results, and this file inventory.
 
@@ -44,7 +45,7 @@ Modified:
 
 GitHub Pages serves static files only; it cannot run the Flask APIs used by the code debugger, news lookup, face detection, and face-presence alarm. The assets use relative URLs so the page and CSS still load from a GitHub Pages project URL such as `https://USERNAME.github.io/REPOSITORY/`, but those API features need a running Flask backend.
 
-The simplest full deployment is to push this repository to GitHub, then in Render choose **New → Blueprint**, select the repository, and deploy the `render.yaml` blueprint from the repository root. The blueprint installs the dependencies, starts Gunicorn bound to Render's assigned port, and serves the frontend and API on the same HTTPS origin. Open the resulting `https://...onrender.com` address (not the GitHub Pages or local file URL). Camera access then works in supported browsers after the user grants permission.
+The simplest full deployment is to push this repository to GitHub, then in Render choose **New → Blueprint**, select the repository, and deploy the `render.yaml` blueprint from the repository root. The blueprint installs the dependencies, starts Gunicorn bound to Render's assigned port, and checks `/health` to ensure the bundled face detector loaded before considering the service healthy. The frontend and API are served on the same HTTPS origin. Open the resulting `https://...onrender.com` address (not the GitHub Pages or local file URL). Camera access then works in supported browsers after the user grants permission.
 
 The blueprint uses Render's free web-service plan. Free services can sleep when idle and take a short time to wake on the next visit. After the first deployment, check the Render deploy logs if the service does not become healthy.
 
@@ -104,4 +105,4 @@ The fixtures cover debugger analysis and safety, plus RSS parsing, date filterin
 
 ## Verification
 
-Run the project fixtures with `python -m pytest -q tests`. These cover debugger safety and analysis, RSS behavior, API responses, and the frontend asset/config routes.
+Run the project fixtures with `python -m pytest -q tests`. These cover debugger safety and analysis, RSS behavior, API responses, frontend asset/config routes, and the bundled face detector and health check.
