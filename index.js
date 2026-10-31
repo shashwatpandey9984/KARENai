@@ -9,6 +9,11 @@ let streamTrackInterval = null;
 let frameCanvas = null;
 let frameRequestPending = false;
 let faceErrorShown = false;
+let lastFaceSeenAt = null;
+let alarmPlayed = false;
+let alarmPlayPending = false;
+let alarmPlayRequest = 0;
+const FACE_ABSENCE_TIMEOUT_MS = 30_000;
 const API_BASE_URL = (window.KAREN_API_BASE_URL || "").replace(/\/+$/, "");
 
 function apiUrl(path) {
@@ -28,29 +33,57 @@ function escapeHtml(text) {
   })[character]);
 }
 
-let alarmPlayed = false;
+async function startFaceAlarm() {
+  const alarm = document.getElementById("alarmSound");
+  if (!alarm || alarmPlayed || alarmPlayPending) return;
 
-async function checkAlert() {
+  const requestId = ++alarmPlayRequest;
+  alarmPlayPending = true;
+  alarm.loop = true;
   try {
-    const response = await fetch(apiUrl("/check"));
-    if (!response.ok) return;
-    const data = await response.json();
-    const alarm = document.getElementById("alarmSound");
-    if (data.alert && !alarmPlayed) {
-      await alarm.play();
-      alarmPlayed = true;
-    } else if (!data.alert && alarmPlayed) {
+    await alarm.play();
+    if (requestId !== alarmPlayRequest) {
       alarm.pause();
       alarm.currentTime = 0;
-      alarmPlayed = false;
+      return;
     }
+    alarmPlayed = true;
   } catch (error) {
-    console.error("Error checking alert:", error);
+    console.error("Could not play face alarm:", error);
+  } finally {
+    if (requestId === alarmPlayRequest) {
+      alarmPlayPending = false;
+    }
   }
 }
 
-if (window.KAREN_API_ENABLED) {
-  window.setInterval(checkAlert, 2000);
+function stopFaceAlarm() {
+  const alarm = document.getElementById("alarmSound");
+  alarmPlayRequest += 1;
+  alarmPlayPending = false;
+  alarmPlayed = false;
+  if (!alarm) return;
+
+  alarm.pause();
+  alarm.currentTime = 0;
+  alarm.loop = false;
+}
+
+function updateFacePresence(faces) {
+  if (!streaming) return;
+
+  if (faces.length > 0) {
+    lastFaceSeenAt = performance.now();
+    stopFaceAlarm();
+    return;
+  }
+
+  if (
+    lastFaceSeenAt !== null &&
+    performance.now() - lastFaceSeenAt >= FACE_ABSENCE_TIMEOUT_MS
+  ) {
+    startFaceAlarm();
+  }
 }
 
 // Load greeting and sync voice button state
@@ -73,13 +106,18 @@ window.addEventListener("DOMContentLoaded", () => {
   const alarmSound = document.getElementById("alarmSound");
   if (openBtn && alarmSound) {
     openBtn.addEventListener("click", () => {
+      alarmSound.muted = true;
       alarmSound.play()
         .then(() => {
           alarmSound.pause();
           alarmSound.currentTime = 0;
-          console.log("✅ Audio unlocked");
+          alarmSound.muted = false;
+          console.log("Alarm audio unlocked");
         })
-        .catch((err) => console.log(err));
+        .catch((err) => {
+          alarmSound.muted = false;
+          console.error("Could not unlock alarm audio:", err);
+        });
     });
   }
 });
@@ -426,16 +464,7 @@ async function openCameraAndDetect() {
 
     streaming = true;
     faceErrorShown = false;
-    if (window.KAREN_API_ENABLED) {
-      const response = await fetch(apiUrl("/set_monitoring"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: true })
-      });
-      if (!response.ok) {
-        throw new Error("Could not start face alarm monitoring");
-      }
-    }
+    lastFaceSeenAt = performance.now();
     await captureAndSendFrame();
     if (!faceErrorShown) {
       streamTrackInterval = setInterval(captureAndSendFrame, 1000);
@@ -449,6 +478,8 @@ async function openCameraAndDetect() {
 
 async function stopCameraDetection() {
   streaming = false;
+  lastFaceSeenAt = null;
+  stopFaceAlarm();
   if (streamTrackInterval) {
     clearInterval(streamTrackInterval);
     streamTrackInterval = null;
@@ -472,13 +503,6 @@ async function stopCameraDetection() {
   }
   if (videoEl) videoEl.style.display = "none";
   if (canvasEl) canvasEl.style.display = "none";
-  if (window.KAREN_API_ENABLED) {
-    fetch(apiUrl("/set_monitoring"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: false })
-    }).catch(err => console.error("Could not stop face alarm monitoring:", err));
-  }
 }
 
 async function captureAndSendFrame() {
@@ -504,6 +528,7 @@ async function captureAndSendFrame() {
 
     faceErrorShown = false;
     drawFaces(data.faces || [], data.width, data.height);
+    updateFacePresence(data.faces || []);
   } catch (err) {
     console.error("Face detection error:", err);
     if (!faceErrorShown) {
@@ -512,6 +537,8 @@ async function captureAndSendFrame() {
         clearInterval(streamTrackInterval);
         streamTrackInterval = null;
       }
+      lastFaceSeenAt = null;
+      stopFaceAlarm();
       botRespond("Camera preview is on, but face detection needs the Flask backend. Deploy the backend and set its URL in config.js.");
     }
   } finally {

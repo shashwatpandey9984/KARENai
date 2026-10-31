@@ -4,8 +4,6 @@ import json
 import logging
 import os
 import re
-import threading
-import time
 
 import cv2
 import numpy as np
@@ -23,15 +21,6 @@ app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 CORS(app)
 
 app.register_blueprint(code_debugger_bp)
-
-# =====================
-# Globals for face presence alarm
-# =====================
-last_seen = time.monotonic()
-alert_triggered = False
-monitoring_enabled = False
-alert_state_lock = threading.Lock()
-ALERT_TIMEOUT_SECONDS = 30
 
 # Load Haar cascade (bundled with OpenCV) with fallback
 def load_cascade():
@@ -79,7 +68,6 @@ def b64_to_cv2(b64_string):
 
 @app.route("/api/detect_faces", methods=["POST"])
 def detect_faces():
-    global last_seen, alert_triggered
     if face_cascade is None:
         return jsonify({"error": "face_cascade_not_loaded", "message": "Face detection not available"}), 503
 
@@ -95,11 +83,6 @@ def detect_faces():
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
         faces_list = [{"x": int(x), "y": int(y), "w": int(w), "h": int(h)} for (x, y, w, h) in faces]
-
-        if faces_list:
-            with alert_state_lock:
-                last_seen = time.monotonic()
-                alert_triggered = False
 
         return jsonify({
             "faces": faces_list,
@@ -153,59 +136,6 @@ def health():
 @app.route("/alarm.mp3")
 def alarm_audio():
     return send_from_directory(PROJECT_DIR, "alarm.mp3")
-
-@app.route("/check")
-def check_alert():
-    with alert_state_lock:
-        return jsonify({"alert": alert_triggered})
-
-@app.route("/set_monitoring", methods=["POST"])
-def set_monitoring():
-    global alert_triggered, last_seen, monitoring_enabled
-    data = request.get_json(silent=True) or {}
-    active = data.get("active")
-    if not isinstance(active, bool):
-        return jsonify({"ok": False, "message": "send JSON {\"active\": true/false}"}), 400
-
-    with alert_state_lock:
-        monitoring_enabled = active
-        alert_triggered = False
-        last_seen = time.monotonic()
-    return jsonify({"ok": True, "active": monitoring_enabled})
-
-# Test route to set/clear alert flag (for development/testing)
-@app.route("/set_alert", methods=["POST"])
-def set_alert():
-    global alert_triggered, last_seen
-    data = request.get_json(force=True, silent=True) or {}
-    val = data.get("alert")
-    if isinstance(val, bool):
-        with alert_state_lock:
-            alert_triggered = val
-            if not val:
-                last_seen = time.monotonic()
-            return jsonify({"ok": True, "alert": alert_triggered})
-    return jsonify({"ok": False, "message": "send JSON {\"alert\": true/false}"}), 400
-
-def update_alert_state(now=None):
-    global alert_triggered
-    current_time = time.monotonic() if now is None else now
-    with alert_state_lock:
-        if (
-            monitoring_enabled
-            and current_time - last_seen > ALERT_TIMEOUT_SECONDS
-            and not alert_triggered
-        ):
-            alert_triggered = True
-            logger.info("No face detected for 30 seconds; alert set")
-
-def alert_monitor():
-    while True:
-        update_alert_state()
-        time.sleep(2)
-
-# start background monitor (daemon so it stops with app)
-threading.Thread(target=alert_monitor, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
