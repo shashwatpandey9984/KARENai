@@ -20,33 +20,6 @@ def test_health_check_includes_face_detection_status():
     assert response.json == {"status": "ok", "face_detection": True}
 
 
-def test_face_alarm_only_triggers_after_30_seconds_of_active_monitoring(
-    monkeypatch,
-):
-    client = backend.app.test_client()
-    now = backend.time.monotonic()
-    monkeypatch.setattr(backend, "monitoring_enabled", False)
-    monkeypatch.setattr(backend, "last_seen", now - 60)
-    monkeypatch.setattr(backend, "alert_triggered", False)
-
-    backend.update_alert_state(now)
-    assert client.get("/check").json == {"alert": False}
-
-    response = client.post("/set_monitoring", json={"active": True})
-    assert response.status_code == 200
-    assert response.json == {"ok": True, "active": True}
-
-    backend.update_alert_state(backend.last_seen + 30)
-    assert client.get("/check").json == {"alert": False}
-
-    backend.update_alert_state(backend.last_seen + 31)
-    assert client.get("/check").json == {"alert": True}
-
-    response = client.post("/set_monitoring", json={"active": False})
-    assert response.status_code == 200
-    assert client.get("/check").json == {"alert": False}
-
-
 def test_face_detection_accepts_a_camera_jpeg():
     encoded_ok, image = backend.cv2.imencode(
         ".jpg", backend.np.zeros((48, 64, 3), dtype=backend.np.uint8)
@@ -63,6 +36,15 @@ def test_face_detection_accepts_a_camera_jpeg():
     assert response.json["width"] == 64
     assert response.json["height"] == 48
     assert response.json["faces"] == []
+
+
+def test_face_alarm_uses_camera_detection_in_browser():
+    script = backend.app.test_client().get("/index.js").get_data(as_text=True)
+
+    assert "const FACE_ABSENCE_TIMEOUT_MS = 30_000;" in script
+    assert "updateFacePresence(data.faces || []);" in script
+    assert "alarm.loop = true;" in script
+    assert "/set_monitoring" not in script
 
 
 def test_frontend_assets_are_served_with_matching_paths():
