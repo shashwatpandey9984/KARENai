@@ -1,6 +1,23 @@
 import base64
+from pathlib import Path
 
 import app as backend
+
+
+def test_face_cascade_is_bundled_and_loadable():
+    cascade_path = Path(backend.__file__).with_name(
+        "haarcascade_frontalface_default.xml"
+    )
+
+    assert cascade_path.is_file()
+    assert not backend.cv2.CascadeClassifier(str(cascade_path)).empty()
+
+
+def test_health_check_includes_face_detection_status():
+    response = backend.app.test_client().get("/health")
+
+    assert response.status_code == 200
+    assert response.json == {"status": "ok", "face_detection": True}
 
 
 def test_face_detection_accepts_a_camera_jpeg():
