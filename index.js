@@ -37,7 +37,7 @@ async function checkAlert() {
     const data = await response.json();
     const alarm = document.getElementById("alarmSound");
     if (data.alert && !alarmPlayed) {
-      await alarm.play().catch(() => {});
+      await alarm.play();
       alarmPlayed = true;
     } else if (!data.alert && alarmPlayed) {
       alarm.pause();
@@ -418,7 +418,6 @@ async function openCameraAndDetect() {
 
   createCameraElements();
   try {
-    faceDetectionAvailable = false;
     faceApiCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
     videoEl.srcObject = faceApiCameraStream;
     videoEl.style.display = "block";
@@ -428,11 +427,14 @@ async function openCameraAndDetect() {
     streaming = true;
     faceErrorShown = false;
     if (window.KAREN_API_ENABLED) {
-      fetch(apiUrl("/set_alert"), {
+      const response = await fetch(apiUrl("/set_monitoring"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ alert: false })
-      }).catch(err => console.error("Could not reset face alarm:", err));
+        body: JSON.stringify({ active: true })
+      });
+      if (!response.ok) {
+        throw new Error("Could not start face alarm monitoring");
+      }
     }
     await captureAndSendFrame();
     if (!faceErrorShown) {
@@ -470,16 +472,14 @@ async function stopCameraDetection() {
   }
   if (videoEl) videoEl.style.display = "none";
   if (canvasEl) canvasEl.style.display = "none";
-  if (faceDetectionAvailable) {
-    fetch(apiUrl("/set_alert"), {
+  if (window.KAREN_API_ENABLED) {
+    fetch(apiUrl("/set_monitoring"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ alert: false })
-    }).catch(err => console.error("Could not clear face alarm:", err));
+      body: JSON.stringify({ active: false })
+    }).catch(err => console.error("Could not stop face alarm monitoring:", err));
   }
 }
-
-let faceDetectionAvailable = false;
 
 async function captureAndSendFrame() {
   if (!streaming || frameRequestPending || !videoEl || videoEl.readyState < 2) return;
@@ -502,7 +502,6 @@ async function captureAndSendFrame() {
       throw new Error(data.message || data.error || "Face detection request failed");
     }
 
-    faceDetectionAvailable = true;
     faceErrorShown = false;
     drawFaces(data.faces || [], data.width, data.height);
   } catch (err) {

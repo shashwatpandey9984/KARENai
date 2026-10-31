@@ -6,7 +6,6 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
@@ -28,8 +27,11 @@ app.register_blueprint(code_debugger_bp)
 # =====================
 # Globals for face presence alarm
 # =====================
-last_seen = datetime.now()
+last_seen = time.monotonic()
 alert_triggered = False
+monitoring_enabled = False
+alert_state_lock = threading.Lock()
+ALERT_TIMEOUT_SECONDS = 30
 
 # Load Haar cascade (bundled with OpenCV) with fallback
 def load_cascade():
@@ -94,10 +96,10 @@ def detect_faces():
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
         faces_list = [{"x": int(x), "y": int(y), "w": int(w), "h": int(h)} for (x, y, w, h) in faces]
 
-        # update last_seen if face(s) detected
-        if len(faces_list) > 0:
-            last_seen = datetime.now()
-            alert_triggered = False
+        if faces_list:
+            with alert_state_lock:
+                last_seen = time.monotonic()
+                alert_triggered = False
 
         return jsonify({
             "faces": faces_list,
@@ -154,7 +156,22 @@ def alarm_audio():
 
 @app.route("/check")
 def check_alert():
-    return jsonify({"alert": alert_triggered})
+    with alert_state_lock:
+        return jsonify({"alert": alert_triggered})
+
+@app.route("/set_monitoring", methods=["POST"])
+def set_monitoring():
+    global alert_triggered, last_seen, monitoring_enabled
+    data = request.get_json(silent=True) or {}
+    active = data.get("active")
+    if not isinstance(active, bool):
+        return jsonify({"ok": False, "message": "send JSON {\"active\": true/false}"}), 400
+
+    with alert_state_lock:
+        monitoring_enabled = active
+        alert_triggered = False
+        last_seen = time.monotonic()
+    return jsonify({"ok": True, "active": monitoring_enabled})
 
 # Test route to set/clear alert flag (for development/testing)
 @app.route("/set_alert", methods=["POST"])
@@ -163,25 +180,28 @@ def set_alert():
     data = request.get_json(force=True, silent=True) or {}
     val = data.get("alert")
     if isinstance(val, bool):
-        alert_triggered = val
-        if val:
-            # if alert set from client, don't update last_seen
-            logger.info("Alert set via /set_alert -> %s", alert_triggered)
-        else:
-            last_seen = datetime.now()
-        return jsonify({"ok": True, "alert": alert_triggered})
+        with alert_state_lock:
+            alert_triggered = val
+            if not val:
+                last_seen = time.monotonic()
+            return jsonify({"ok": True, "alert": alert_triggered})
     return jsonify({"ok": False, "message": "send JSON {\"alert\": true/false}"}), 400
 
-def alert_monitor():
+def update_alert_state(now=None):
     global alert_triggered
+    current_time = time.monotonic() if now is None else now
+    with alert_state_lock:
+        if (
+            monitoring_enabled
+            and current_time - last_seen > ALERT_TIMEOUT_SECONDS
+            and not alert_triggered
+        ):
+            alert_triggered = True
+            logger.info("No face detected for 30 seconds; alert set")
+
+def alert_monitor():
     while True:
-        if datetime.now() - last_seen > timedelta(seconds=30):
-            if not alert_triggered:
-                alert_triggered = True
-                logger.info("No face detected for 30 seconds; alert set")
-        else:
-            if alert_triggered:
-                alert_triggered = False
+        update_alert_state()
         time.sleep(2)
 
 # start background monitor (daemon so it stops with app)
